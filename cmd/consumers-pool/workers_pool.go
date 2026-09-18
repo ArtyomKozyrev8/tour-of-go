@@ -14,26 +14,33 @@ type RateCounter struct {
 }
 
 type WorkersPool struct {
+	scaleMutex sync.Mutex // Синхронизация балансировки
 	minNum     int        // Минимальное кол-во воркеров в пуле
 	maxNum     int        // Максимальное кол-во воркеров в пуле
 	curNum     int        // Текущее кол-во воркеров в пуле
-	scaleMutex sync.Mutex // Синхронизация балансировки
 
 	cancelSlice   []context.CancelFunc // Храним для остановки отдельных воркеров
 	workersChan   chan interface{}     // Канал входных задач
-	waitGroup     sync.WaitGroup       // Нужно для синхронизации остановки воркеров
+	waitGroup     *sync.WaitGroup      // Нужно для синхронизации остановки воркеров
 	nameCounter   int                  // Счетчик имен воркеров
 	rateCounter   *RateCounter         // Внешний источник увеличивает его, пул обнуляем его при ребалансировке
 	maxBorderRate int                  // Если выше - увеличиваем кол-во воркеров
 	minBorderRate int                  // Если темп ниже - уменьшаем кол-во воркеров
-	globalStop    atomic.Bool          // Внешний источник показывает что новых задач не будет (останавливает балансировку)
+	globalStop    *atomic.Bool         // Внешний источник показывает что новых задач не будет (останавливает балансировку)
 }
 
 // NewWorkersPool создает новый пул воркеров
-func NewWorkersPool(minNum int, maxNum int) *WorkersPool {
+func NewWorkersPool(minNum int, maxNum int, rateCounter *RateCounter, minBorderRate int, maxBorderRate int, globalStop *atomic.Bool) *WorkersPool {
 	return &WorkersPool{
-		minNum: minNum,
-		maxNum: maxNum,
+		minNum:        minNum,
+		maxNum:        maxNum,
+		workersChan:   make(chan interface{}, 1000),
+		rateCounter:   rateCounter,
+		minBorderRate: minBorderRate,
+		maxBorderRate: maxBorderRate,
+		globalStop:    globalStop,
+		waitGroup:     &sync.WaitGroup{},
+		scaleMutex:    sync.Mutex{},
 	}
 }
 
