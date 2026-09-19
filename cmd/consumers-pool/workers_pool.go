@@ -9,38 +9,30 @@ import (
 	"time"
 )
 
-type RateCounter struct {
-	rate atomic.Int64
-}
-
 type WorkersPool struct {
 	scaleMutex sync.Mutex // Синхронизация балансировки
 	minNum     int        // Минимальное кол-во воркеров в пуле
 	maxNum     int        // Максимальное кол-во воркеров в пуле
 	curNum     int        // Текущее кол-во воркеров в пуле
 
-	cancelSlice   []context.CancelFunc // Храним для остановки отдельных воркеров
-	workersChan   chan interface{}     // Канал входных задач
-	waitGroup     *sync.WaitGroup      // Нужно для синхронизации остановки воркеров
-	nameCounter   int                  // Счетчик имен воркеров
-	rateCounter   *RateCounter         // Внешний источник увеличивает его, пул обнуляем его при ребалансировке
-	maxBorderRate int                  // Если выше - увеличиваем кол-во воркеров
-	minBorderRate int                  // Если темп ниже - уменьшаем кол-во воркеров
-	globalStop    *atomic.Bool         // Внешний источник показывает что новых задач не будет (останавливает балансировку)
+	cancelSlice []context.CancelFunc // Храним для остановки отдельных воркеров
+	workersChan chan interface{}     // Канал входных задач
+	waitGroup   *sync.WaitGroup      // Нужно для синхронизации остановки воркеров
+	nameCounter int                  // Счетчик имен воркеров
+	globalStop  *atomic.Bool         // Внешний источник показывает что новых задач не будет (останавливает балансировку)
+	mCounter    *MetricsCounter
 }
 
 // NewWorkersPool создает новый пул воркеров
-func NewWorkersPool(minNum int, maxNum int, rateCounter *RateCounter, minBorderRate int, maxBorderRate int, globalStop *atomic.Bool) *WorkersPool {
+func NewWorkersPool(minNum int, maxNum int, globalStop *atomic.Bool, mCounter *MetricsCounter, wg *sync.WaitGroup) *WorkersPool {
 	return &WorkersPool{
-		minNum:        minNum,
-		maxNum:        maxNum,
-		workersChan:   make(chan interface{}, 1000),
-		rateCounter:   rateCounter,
-		minBorderRate: minBorderRate,
-		maxBorderRate: maxBorderRate,
-		globalStop:    globalStop,
-		waitGroup:     &sync.WaitGroup{},
-		scaleMutex:    sync.Mutex{},
+		minNum:      minNum,
+		maxNum:      maxNum,
+		workersChan: make(chan interface{}, 1000),
+		globalStop:  globalStop,
+		waitGroup:   wg,
+		scaleMutex:  sync.Mutex{},
+		mCounter:    mCounter,
 	}
 }
 
@@ -57,8 +49,10 @@ func (wp *WorkersPool) runWorker(name string, stopContext context.Context) {
 				fmt.Printf("%s worker stopped. All tasks were done\n", name)
 				return
 			}
+			wp.mCounter.receivedConsumer.Add(1)
 			time.Sleep(time.Duration(300+rand.Intn(700)) * time.Millisecond)
 			fmt.Printf("%s did task %v.\n", name, task)
+			wp.mCounter.processedConsumer.Add(1)
 		}
 	}
 }
@@ -87,17 +81,13 @@ func (wp *WorkersPool) balanceWorkersNum() {
 	wp.scaleMutex.Lock()
 	defer wp.scaleMutex.Unlock()
 
-	rate := int(wp.rateCounter.rate.Load())
-
-	if wp.curNum < wp.maxNum && rate > wp.maxBorderRate {
-		wp.rateCounter.rate.Store(0)
+	chanelTaskNum := len(wp.workersChan)
+	if wp.curNum < wp.maxNum && chanelTaskNum > 100 {
 		wp.createNewWorker()
-	} else if wp.curNum > wp.minNum && rate < wp.minBorderRate {
-		wp.rateCounter.rate.Store(0)
+	} else if wp.curNum > wp.minNum && chanelTaskNum < 10 {
 		wp.cancelWorker()
-	} else {
-		wp.rateCounter.rate.Store(0)
 	}
+	fmt.Printf("Currrent chanelTaskNum: %d\n", chanelTaskNum)
 }
 
 // Start запускает работу пула

@@ -29,7 +29,7 @@ func NewProducerPool(num int, stopCtx context.Context, syncGroup *sync.WaitGroup
 }
 
 func (pp *ProducerPool) createProducer(name string) {
-	fmt.Printf("Producer-%s was created\n", name)
+	fmt.Printf("%s was created\n", name)
 	timer := time.NewTimer(time.Millisecond * time.Duration(100+rand.Intn(500)))
 
 	for {
@@ -47,7 +47,7 @@ func (pp *ProducerPool) createProducer(name string) {
 			cancel()
 			timer.Reset(time.Millisecond * time.Duration(100+rand.Intn(500)))
 		case <-pp.stopCtx.Done():
-			fmt.Printf("Producer-%s is stopped\n", name)
+			fmt.Printf("%s is stopped\n", name)
 			return
 		}
 	}
@@ -55,7 +55,7 @@ func (pp *ProducerPool) createProducer(name string) {
 
 func (pp *ProducerPool) Start() {
 	for i := 0; i < pp.num; i++ {
-		name := fmt.Sprintf("Producer-%d", i)
+		name := fmt.Sprintf("%d", i)
 		pp.syncGroup.Go(func() {
 			pp.createProducer(name)
 		})
